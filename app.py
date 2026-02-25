@@ -8,8 +8,8 @@ from fastapi.templating import Jinja2Templates
 
 from processor import run_ap_process
 
-
-BASE_DIR = os.getcwd()
+# 🔥 FIX: use the real app directory — NOT os.getcwd()
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 TEMPLATES_DIR = os.path.join(BASE_DIR, "templates")
 AP_TEMPLATE_PATH = os.path.join(BASE_DIR, "AP_run_template.xlsx")
 
@@ -49,8 +49,6 @@ async def run_process(request: Request, file: UploadFile = File(...)):
             temp_path = tmp.name
             shutil.copyfileobj(file.file, tmp)
 
-        # Isolate each web run to a fresh output root so reruns don't accumulate duplicates
-        # from previous runs in the same date folder.
         run_out_root = tempfile.mkdtemp(prefix="xero_ap_run_")
         prev_out_root = os.environ.get("XERO_OUT_ROOT")
         os.environ["XERO_OUT_ROOT"] = run_out_root
