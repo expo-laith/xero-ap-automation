@@ -1,6 +1,7 @@
 # xero_aprun_downloader.py  (flat category folders + numbered filenames)
 import os
 import json
+import base64
 import time
 import datetime as dt
 from typing import Dict, Any, List, Optional
@@ -10,31 +11,137 @@ from openpyxl import load_workbook
 
 SECRETS_FILE = "xero_secrets.json"
 
+# ---------------- Environment helpers ----------------
+def _env(*names):
+    """Return the first non-empty environment variable from the given names."""
+    for name in names:
+        val = os.environ.get(name, "").strip()
+        if val:
+            return val
+    return None
+
 # ---------------- OAuth ----------------
 def load_secrets() -> Dict[str, str]:
-    with open(SECRETS_FILE, "r", encoding="utf-8") as f:
-        return json.load(f)
+    """Load secrets from environment variables with fallback to xero_secrets.json if it exists."""
+    secrets = {}
+    
+    # Try environment variables first (with fallback names)
+    secrets["client_id"] = _env("XERO_CLIENT_ID", "CLIENT_ID") or ""
+    secrets["client_secret"] = _env("XERO_CLIENT_SECRET", "CLIENT_SECRET") or ""
+    secrets["refresh_token"] = _env("XERO_REFRESH_TOKEN", "REFRESH_TOKEN") or ""
+    secrets["tenant_id"] = _env("XERO_TENANT_ID", "TENANT_ID") or ""
+    secrets["scopes"] = _env("XERO_SCOPES", "SCOPES") or "offline_access accounting.transactions accounting.attachments"
+    secrets["redirect_uri"] = _env("XERO_REDIRECT_URI", "REDIRECT_URI") or "http://localhost:8080/callback"
+    
+    # If any required field is missing and xero_secrets.json exists, load from file
+    if (not secrets["client_id"] or not secrets["client_secret"] or not secrets["refresh_token"]) and os.path.exists(SECRETS_FILE):
+        with open(SECRETS_FILE, "r", encoding="utf-8") as f:
+            file_secrets = json.load(f)
+            secrets["client_id"] = secrets["client_id"] or file_secrets.get("client_id", "")
+            secrets["client_secret"] = secrets["client_secret"] or file_secrets.get("client_secret", "")
+            secrets["refresh_token"] = secrets["refresh_token"] or file_secrets.get("refresh_token", "")
+            secrets["tenant_id"] = secrets["tenant_id"] or file_secrets.get("tenant_id", "")
+            secrets["scopes"] = secrets["scopes"] or file_secrets.get("scopes", "offline_access accounting.transactions accounting.attachments")
+            secrets["redirect_uri"] = secrets["redirect_uri"] or file_secrets.get("redirect_uri", "http://localhost:8080/callback")
+    
+    if not secrets["client_id"] or not secrets["client_secret"] or not secrets["refresh_token"]:
+        raise ValueError("Missing required credentials: client_id, client_secret, and refresh_token must be provided via environment variables or xero_secrets.json")
+    
+    return secrets
 
 def save_secrets(s: Dict[str, str]):
-    with open(SECRETS_FILE, "w", encoding="utf-8") as f:
-        json.dump(s, f, indent=2)
+    """Save secrets back to xero_secrets.json if running locally (file exists)."""
+    if os.path.exists(SECRETS_FILE):
+        with open(SECRETS_FILE, "w", encoding="utf-8") as f:
+            json.dump(s, f, indent=2)
+        print(f"[info] Updated {SECRETS_FILE} with new refresh token")
 
 def refresh_access_token(secrets: Dict[str, str]) -> str:
+    """Refresh the access token using the correct OAuth2 flow with Basic auth."""
+    client_id = secrets["client_id"]
+    client_secret = secrets["client_secret"]
+    refresh_token = secrets["refresh_token"]
+    
+    # Create Basic auth header
+    credentials = f"{client_id}:{client_secret}"
+    b64_credentials = base64.b64encode(credentials.encode()).decode()
+    
+    headers = {
+        "Authorization": f"Basic {b64_credentials}",
+        "Content-Type": "application/x-www-form-urlencoded"
+    }
+    
+    data = {
+        "grant_type": "refresh_token",
+        "refresh_token": refresh_token
+    }
+    
     r = requests.post(
         "https://identity.xero.com/connect/token",
-        data={
-            "grant_type": "refresh_token",
-            "refresh_token": secrets["refresh_token"],
-            "client_id": secrets["client_id"],
-            "client_secret": secrets["client_secret"],
-        },
+        headers=headers,
+        data=data,
         timeout=40,
     )
+    
+    # Debug output as required
+    print("TOKEN STATUS:", r.status_code)
+    print("TOKEN BODY:", r.text)
+    
     r.raise_for_status()
     tok = r.json()
-    secrets["refresh_token"] = tok["refresh_token"]  # Xero rotates
-    save_secrets(secrets)
+    
+    # Xero rotates refresh tokens - handle persistence
+    new_refresh_token = tok.get("refresh_token")
+    if new_refresh_token and new_refresh_token != refresh_token:
+        secrets["refresh_token"] = new_refresh_token
+        
+        # Check if running in Azure (XERO_REFRESH_TOKEN env var present)
+        if _env("XERO_REFRESH_TOKEN", "REFRESH_TOKEN"):
+            print("=" * 80)
+            print("WARNING: Refresh token has been rotated by Xero!")
+            print("You are running in Azure App Service (environment variable detected).")
+            print("You MUST manually update the XERO_REFRESH_TOKEN in Azure App Settings.")
+            print("New refresh token:")
+            print(new_refresh_token)
+            print("=" * 80)
+        else:
+            # Running locally - save to file if it exists
+            save_secrets(secrets)
+    
     return tok["access_token"]
+
+def get_tenant_id(token: str, secrets: Dict[str, str]) -> str:
+    """Get tenant ID from env var or by querying Xero connections API."""
+    tenant_id = secrets.get("tenant_id")
+    if tenant_id:
+        print(f"[info] Using tenant ID from configuration: {tenant_id}")
+        return tenant_id
+    
+    # Query connections API
+    print("[info] Tenant ID not configured, querying Xero connections...")
+    headers = {
+        "Authorization": f"Bearer {token}",
+        "Content-Type": "application/json"
+    }
+    
+    r = requests.get("https://api.xero.com/connections", headers=headers, timeout=30)
+    r.raise_for_status()
+    
+    connections = r.json()
+    if not connections:
+        raise ValueError("No Xero connections found for this account")
+    
+    conn = connections[0]
+    tenant_id = conn["tenantId"]
+    tenant_name = conn.get("tenantName", "Unknown")
+    
+    print(f"[info] Selected tenant: {tenant_name} (ID: {tenant_id})")
+    
+    # Save for future use
+    secrets["tenant_id"] = tenant_id
+    save_secrets(secrets)
+    
+    return tenant_id
 
 def xero_get(url: str, token: str, tenant_id: str, params=None, stream: bool=False):
     headers = {
@@ -174,13 +281,22 @@ def unique_path(base_dir: str, fname: str) -> str:
 
 # ---------------- Main ----------------
 def main():
-    # Adjust these two if needed
-    xlsx_path = os.environ.get("XERO_APRUN_XLSX", r"C:\Users\laith\OneDrive\Desktop\Xero project 2\AP run.xlsx")
-    out_root  = os.environ.get("XERO_OUT_ROOT",  r"C:\Users\laith\OneDrive\Desktop\Xero project 2")
+    # Determine paths based on environment (local vs Azure)
+    # Local defaults
+    default_xlsx = "AP run.xlsx"
+    default_out = "./output"
+    
+    # Azure detection and defaults
+    if os.path.exists("/home/site/wwwroot"):
+        # Running in Azure App Service
+        default_out = "/home/site/wwwroot/output"
+    
+    xlsx_path = os.environ.get("XERO_APRUN_XLSX", default_xlsx)
+    out_root  = os.environ.get("XERO_OUT_ROOT", default_out)
 
     secrets   = load_secrets()
     token     = refresh_access_token(secrets)
-    tenant_id = secrets["tenant_id"]
+    tenant_id = get_tenant_id(token, secrets)
 
     today_folder = os.path.join(out_root, dt.date.today().isoformat())
     os.makedirs(today_folder, exist_ok=True)
@@ -264,4 +380,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-                        
