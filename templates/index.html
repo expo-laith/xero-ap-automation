@@ -309,42 +309,146 @@
     </main>
   </div>
 
-  <script>
-    (function () {
-      var fileInput = document.getElementById("fileInput");
-      var fileName = document.getElementById("fileName");
-      var runButton = document.getElementById("runButton");
-      var runForm = document.getElementById("runForm");
-      var progressSection = document.getElementById("progressSection");
-      var progressBar = document.getElementById("progressBar");
-      var progressPercent = document.getElementById("progressPercent");
+ <script>
+(function () {
 
-      function updateFileName() {
-        var file = fileInput.files && fileInput.files[0];
-        if (file) {
-          fileName.textContent = file.name;
-          fileName.classList.remove("empty");
-          runButton.disabled = false;
-        } else {
-          fileName.textContent = "No file selected";
-          fileName.classList.add("empty");
-          runButton.disabled = true;
-        }
+  const fileInput = document.getElementById("fileInput");
+  const fileName = document.getElementById("fileName");
+  const runButton = document.getElementById("runButton");
+  const runForm = document.getElementById("runForm");
+  const progressSection = document.getElementById("progressSection");
+  const progressBar = document.getElementById("progressBar");
+  const progressPercent = document.getElementById("progressPercent");
+  const progressLabel = progressSection.querySelector(".progress-label");
+
+  const REQUEST_TIMEOUT_MS = 10 * 60 * 1000;
+
+  let isSubmitting = false;
+  let rafId = null;
+  let currentProgress = 0;
+  let startTime = 0;
+
+  function updateFileName() {
+    const file = fileInput.files[0];
+    if (file) {
+      fileName.textContent = file.name;
+      fileName.classList.remove("empty");
+      runButton.disabled = false;
+    } else {
+      fileName.textContent = "No file selected";
+      fileName.classList.add("empty");
+      runButton.disabled = true;
+    }
+  }
+
+  function renderProgress(value, label) {
+    currentProgress = Math.min(value, 99);
+    progressSection.style.display = "block";
+    progressBar.style.width = currentProgress + "%";
+    progressPercent.textContent = Math.round(currentProgress) + "%";
+    if (label) progressLabel.textContent = label;
+  }
+
+  function simulateProgress() {
+    startTime = performance.now();
+
+    function tick(now) {
+      if (!isSubmitting) return;
+
+      const elapsed = now - startTime;
+      let value;
+
+      if (elapsed < 2000) {
+        value = 5 + (25 * (elapsed / 2000));
+        renderProgress(value, "Uploading file...");
+      } else if (elapsed < 12000) {
+        value = 30 + (55 * ((elapsed - 2000) / 10000));
+        renderProgress(value, "Processing file...");
+      } else {
+        value = 85 + (10 * (1 - Math.exp(-(elapsed - 12000) / 20000)));
+        renderProgress(value, "Still processing...");
       }
 
-      fileInput.addEventListener("change", updateFileName);
+      rafId = requestAnimationFrame(tick);
+    }
 
-      runForm.addEventListener("submit", function () {
-        if (!fileInput.files || !fileInput.files.length) {
-          return;
-        }
-        progressSection.style.display = "block";
-        progressBar.style.width = "35%";
-        progressPercent.textContent = "35%";
-        runButton.disabled = true;
-        runButton.textContent = "Processing...";
+    rafId = requestAnimationFrame(tick);
+  }
+
+  function stopSimulation() {
+    if (rafId) cancelAnimationFrame(rafId);
+  }
+
+  function showError(message) {
+    progressLabel.textContent = "Failed";
+    progressBar.style.background =
+      "linear-gradient(90deg,#fca5a5 0%,#dc2626 100%)";
+    alert(message);
+  }
+
+  function downloadBlob(blob, filename) {
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = filename || "output.zip";
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 1000);
+  }
+
+  fileInput.addEventListener("change", updateFileName);
+
+  runForm.addEventListener("submit", async function (e) {
+    e.preventDefault();
+    if (isSubmitting || !fileInput.files.length) return;
+
+    isSubmitting = true;
+    runButton.disabled = true;
+    runButton.textContent = "Processing...";
+    progressBar.style.background =
+      "linear-gradient(90deg,#60a5fa 0%,#2563eb 100%)";
+
+    simulateProgress();
+
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
+
+    try {
+      const response = await fetch(runForm.action, {
+        method: "POST",
+        body: new FormData(runForm),
+        signal: controller.signal
       });
-    })();
-  </script>
+
+      if (!response.ok) {
+        const text = await response.text();
+        throw new Error(text || "Server error");
+      }
+
+      const blob = await response.blob();
+      if (!blob.size) throw new Error("Empty file returned");
+
+      stopSimulation();
+      renderProgress(100, "Preparing download...");
+      await new Promise(r => setTimeout(r, 300));
+
+      downloadBlob(blob, "xero-output.zip");
+      progressLabel.textContent = "Complete";
+
+    } catch (err) {
+      stopSimulation();
+      showError(err.message || "Processing failed");
+    } finally {
+      clearTimeout(timeout);
+      isSubmitting = false;
+      runButton.disabled = false;
+      runButton.textContent = "Run Process";
+    }
+  });
+
+  updateFileName();
+})();
+</script>
 </body>
 </html>
