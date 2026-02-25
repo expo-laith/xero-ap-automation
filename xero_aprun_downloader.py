@@ -68,7 +68,8 @@ def refresh_access_token(secrets: Dict[str, str]) -> str:
     
     headers = {
         "Authorization": f"Basic {b64_credentials}",
-        "Content-Type": "application/x-www-form-urlencoded"
+        "Content-Type": "application/x-www-form-urlencoded",
+        "Accept": "application/json"
     }
     
     data = {
