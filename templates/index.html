@@ -1,0 +1,350 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Xero AP Automation</title>
+  <style>
+    :root {
+      --bg: #f1f4f8;
+      --card: #ffffff;
+      --text: #1f2937;
+      --muted: #6b7280;
+      --line: #dbe3ec;
+      --line-strong: #cdd8e5;
+      --blue: #2563eb;
+      --blue-hover: #1d4ed8;
+      --blue-soft: #e8f0ff;
+      --grey-btn: #f8fafc;
+      --grey-btn-hover: #eef2f7;
+      --success-bg: #ecfdf3;
+      --success-border: #a7f3d0;
+      --success-text: #065f46;
+      --shadow: 0 18px 42px rgba(15, 23, 42, 0.08);
+    }
+
+    * {
+      box-sizing: border-box;
+    }
+
+    body {
+      margin: 0;
+      min-height: 100vh;
+      display: grid;
+      place-items: center;
+      padding: 24px;
+      background: linear-gradient(180deg, #f5f7fb 0%, #eef2f7 100%);
+      color: var(--text);
+      font-family: "Segoe UI", Arial, sans-serif;
+    }
+
+    .shell {
+      width: 100%;
+      max-width: 760px;
+    }
+
+    .card {
+      background: var(--card);
+      border: 1px solid var(--line);
+      border-radius: 18px;
+      box-shadow: var(--shadow);
+      padding: 28px;
+    }
+
+    .header {
+      margin-bottom: 22px;
+    }
+
+    .title {
+      margin: 0;
+      font-size: 1.85rem;
+      font-weight: 700;
+      letter-spacing: -0.02em;
+      color: #0f172a;
+    }
+
+    .subtitle {
+      margin: 8px 0 0;
+      font-size: 0.98rem;
+      color: var(--muted);
+    }
+
+    .section {
+      margin-top: 18px;
+    }
+
+    .section-label {
+      margin: 0 0 10px;
+      font-size: 0.9rem;
+      font-weight: 600;
+      color: #334155;
+      text-transform: uppercase;
+      letter-spacing: 0.04em;
+    }
+
+    .btn-row {
+      display: flex;
+      gap: 12px;
+      flex-wrap: wrap;
+    }
+
+    .btn {
+      border: 1px solid transparent;
+      border-radius: 10px;
+      min-height: 42px;
+      padding: 0 14px;
+      font-size: 0.95rem;
+      font-weight: 600;
+      cursor: pointer;
+      text-decoration: none;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      transition: background-color 0.15s ease, border-color 0.15s ease, box-shadow 0.15s ease;
+    }
+
+    .btn-primary {
+      background: var(--blue);
+      color: #fff;
+      border-color: var(--blue);
+      box-shadow: 0 4px 14px rgba(37, 99, 235, 0.2);
+    }
+
+    .btn-primary:hover:not(:disabled) {
+      background: var(--blue-hover);
+      border-color: var(--blue-hover);
+    }
+
+    .btn-primary:disabled {
+      cursor: not-allowed;
+      opacity: 0.65;
+      box-shadow: none;
+    }
+
+    .btn-secondary {
+      background: var(--grey-btn);
+      color: #0f172a;
+      border-color: var(--line-strong);
+    }
+
+    .btn-secondary:hover {
+      background: var(--grey-btn-hover);
+    }
+
+    form {
+      margin: 0;
+    }
+
+    .upload-area {
+      border: 1.5px dashed var(--line-strong);
+      border-radius: 14px;
+      background: #fbfdff;
+      padding: 18px;
+      transition: border-color 0.15s ease, background-color 0.15s ease;
+    }
+
+    .upload-area:hover {
+      border-color: #b6c5d8;
+      background: #f8fbff;
+    }
+
+    .upload-input {
+      width: 100%;
+      padding: 12px;
+      border: 1px solid var(--line);
+      border-radius: 10px;
+      font-size: 0.95rem;
+      background: #fff;
+      color: var(--text);
+    }
+
+    .hint {
+      margin-top: 8px;
+      font-size: 0.88rem;
+      color: var(--muted);
+    }
+
+    .file-name {
+      margin-top: 10px;
+      font-size: 0.92rem;
+      color: #334155;
+      min-height: 20px;
+      word-break: break-word;
+    }
+
+    .file-name.empty {
+      color: var(--muted);
+    }
+
+    .actions {
+      margin-top: 18px;
+      display: flex;
+      gap: 12px;
+      flex-wrap: wrap;
+      align-items: center;
+    }
+
+    .progress {
+      display: none;
+      margin-top: 18px;
+      padding: 14px;
+      border: 1px solid var(--line);
+      border-radius: 12px;
+      background: #f8fbff;
+    }
+
+    .progress-top {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-bottom: 10px;
+      gap: 10px;
+    }
+
+    .progress-label {
+      font-size: 0.92rem;
+      color: #334155;
+      font-weight: 600;
+    }
+
+    .progress-percent {
+      font-size: 0.9rem;
+      color: var(--blue);
+      font-weight: 700;
+    }
+
+    .progress-track {
+      width: 100%;
+      height: 10px;
+      border-radius: 999px;
+      background: #e6edf7;
+      overflow: hidden;
+      border: 1px solid #dde6f1;
+    }
+
+    .progress-bar {
+      width: 0%;
+      height: 100%;
+      background: linear-gradient(90deg, #60a5fa 0%, #2563eb 100%);
+      border-radius: 999px;
+      transition: width 0.2s ease;
+    }
+
+    .result {
+      margin-top: 18px;
+      padding: 14px 16px;
+      border-radius: 12px;
+      border: 1px solid var(--success-border);
+      background: var(--success-bg);
+      color: var(--success-text);
+      font-size: 0.94rem;
+    }
+
+    @media (max-width: 640px) {
+      .card {
+        padding: 20px;
+        border-radius: 16px;
+      }
+
+      .title {
+        font-size: 1.5rem;
+      }
+
+      .btn-row,
+      .actions {
+        flex-direction: column;
+        align-items: stretch;
+      }
+
+      .btn {
+        width: 100%;
+      }
+    }
+  </style>
+</head>
+<body>
+  <div class="shell">
+    <main class="card">
+      <header class="header">
+        <h1 class="title">Xero AP Automation</h1>
+        <p class="subtitle">Upload AP Run file to process and download project ZIP</p>
+      </header>
+
+      <section class="section">
+        <p class="section-label">Template Download</p>
+        <div class="btn-row">
+          <a class="btn btn-secondary" href="/download-template">Download Template</a>
+        </div>
+      </section>
+
+      <section class="section">
+        <p class="section-label">Upload AP Run File</p>
+
+        <form id="runForm" action="/run" method="post" enctype="multipart/form-data">
+          <div class="upload-area">
+            <input id="fileInput" class="upload-input" type="file" name="file" accept=".xlsx" required>
+            <div class="hint">Accepted file type: .xlsx</div>
+            <div id="fileName" class="file-name empty">No file selected</div>
+          </div>
+
+          <div class="actions">
+            <button id="runButton" class="btn btn-primary" type="submit" disabled>Run Process</button>
+          </div>
+
+          <section id="progressSection" class="progress" aria-label="Progress">
+            <div class="progress-top">
+              <div class="progress-label">Processing file...</div>
+              <div id="progressPercent" class="progress-percent">5%</div>
+            </div>
+            <div class="progress-track">
+              <div id="progressBar" class="progress-bar"></div>
+            </div>
+          </section>
+
+          {% if result_message %}
+          <div class="result" role="status">{{ result_message }}</div>
+          {% endif %}
+        </form>
+      </section>
+    </main>
+  </div>
+
+  <script>
+    (function () {
+      var fileInput = document.getElementById("fileInput");
+      var fileName = document.getElementById("fileName");
+      var runButton = document.getElementById("runButton");
+      var runForm = document.getElementById("runForm");
+      var progressSection = document.getElementById("progressSection");
+      var progressBar = document.getElementById("progressBar");
+      var progressPercent = document.getElementById("progressPercent");
+
+      function updateFileName() {
+        var file = fileInput.files && fileInput.files[0];
+        if (file) {
+          fileName.textContent = file.name;
+          fileName.classList.remove("empty");
+          runButton.disabled = false;
+        } else {
+          fileName.textContent = "No file selected";
+          fileName.classList.add("empty");
+          runButton.disabled = true;
+        }
+      }
+
+      fileInput.addEventListener("change", updateFileName);
+
+      runForm.addEventListener("submit", function () {
+        if (!fileInput.files || !fileInput.files.length) {
+          return;
+        }
+        progressSection.style.display = "block";
+        progressBar.style.width = "35%";
+        progressPercent.textContent = "35%";
+        runButton.disabled = true;
+        runButton.textContent = "Processing...";
+      });
+    })();
+  </script>
+</body>
+</html>

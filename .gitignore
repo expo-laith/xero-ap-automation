@@ -1,0 +1,31 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+.pytest_cache/
+.mypy_cache/
+.coverage
+.python_packages/
+
+# Virtual environments
+.venv/
+venv/
+antenv/
+
+# Secrets / local runtime state
+xero_secrets.json
+downloaded_state.json
+.env
+.env.*
+*.log
+*.tmp
+
+# Generated outputs
+*.zip
+20??-??-??/
+
+# OS / editor
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
