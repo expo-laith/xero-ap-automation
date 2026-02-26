@@ -1,7 +1,3 @@
-# Docs for the Azure Web Apps Deploy action: https://github.com/Azure/webapps-deploy
-# More GitHub Actions for Azure: https://github.com/Azure/actions
-# More info on Python, GitHub Actions, and Azure App Service: https://aka.ms/python-webapps-actions
-
 name: Build and deploy Python app to Azure Web App - xero-ap-run-downloader
 
 on:
@@ -11,88 +7,43 @@ on:
   workflow_dispatch:
 
 jobs:
-  build:
+  build-and-deploy:
     runs-on: ubuntu-latest
     permissions:
-      contents: read #This is required for actions/checkout
+      id-token: write
+      contents: read
 
     steps:
       - uses: actions/checkout@v4
 
-      - name: Set up Python version
+      - name: Set up Python
         uses: actions/setup-python@v5
         with:
           python-version: '3.11'
 
-      - name: Create and start virtual environment
+      - name: Install dependencies (for validation only)
         run: |
-          python -m venv antenv
-          source antenv/bin/activate
-
-      - name: Install dependencies
-        run: |
-          source antenv/bin/activate
+          python -m pip install --upgrade pip
           pip install -r requirements.txt
 
-      - name: Create deployment package
+      - name: Zip application
         run: |
-          # Create a clean directory for the package
-          mkdir -p deploy_package
-          
-          # Copy application files (exclude .git, __pycache__, antenv, and other unnecessary files)
-          rsync -av --progress . deploy_package/ \
-            --exclude .git \
-            --exclude .github \
-            --exclude __pycache__ \
-            --exclude '*.pyc' \
-            --exclude antenv \
-            --exclude deploy_package \
-            --exclude .gitignore \
-            --exclude .vscode \
-            --exclude '*.log'
-          
-          # Copy installed packages from virtual environment
-          cp -r antenv/lib/python3.11/site-packages/* deploy_package/
-          
-          # Create ZIP file
-          cd deploy_package
-          zip -r ../app.zip . -x "*.pyc" -x "__pycache__/*"
-          cd ..
-          
-          echo "Deployment package created: app.zip"
-          ls -lh app.zip
+          zip -r app.zip . \
+            -x "*.git*" \
+            -x "__pycache__/*" \
+            -x "*.venv*" \
+            -x "*.log"
 
-      - name: Upload artifact for deployment jobs
-        uses: actions/upload-artifact@v4
-        with:
-          name: python-app
-          path: app.zip
-
-  deploy:
-    runs-on: ubuntu-latest
-    needs: build
-    permissions:
-      id-token: write #This is required for requesting the JWT
-      contents: read #This is required for actions/checkout
-
-    steps:
-      - name: Download artifact from build job
-        uses: actions/download-artifact@v4
-        with:
-          name: python-app
-      
-      - name: Login to Azure
+      - name: Azure Login
         uses: azure/login@v2
         with:
           client-id: ${{ secrets.AZUREAPPSERVICE_CLIENTID_0E41A915ACC745E2987B2FBF36DD1043 }}
           tenant-id: ${{ secrets.AZUREAPPSERVICE_TENANTID_98B8E0D58F3D4E3AA919E0011D45A56E }}
           subscription-id: ${{ secrets.AZUREAPPSERVICE_SUBSCRIPTIONID_E41FB1344E0B40AAB83F1C9407A38CD2 }}
 
-      - name: 'Deploy to Azure Web App'
+      - name: Deploy to Azure Web App
         uses: azure/webapps-deploy@v3
-        id: deploy-to-webapp
         with:
           app-name: 'xero-ap-run-downloader'
           slot-name: 'Production'
-          package: .
-
+          package: app.zip
