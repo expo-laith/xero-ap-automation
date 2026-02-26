@@ -94,4 +94,5 @@ jobs:
         with:
           app-name: 'xero-ap-run-downloader'
           slot-name: 'Production'
-          package: app.zip
+          package: .
+
