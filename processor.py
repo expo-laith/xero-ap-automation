@@ -10,46 +10,46 @@ from typing import Dict, Any, List, Optional
 import requests
 from openpyxl import load_workbook
 
-BASE_DIR = os.getcwd()
-SECRETS_FILE = os.path.join(BASE_DIR, "xero_secrets.json")
-
 # ---------------- OAuth ----------------
-def load_secrets() -> Dict[str, str]:
-    # For GitHub/Azure deployment we load credentials from environment variables
-    # so secrets are not stored in source control.
-    secrets: Dict[str, str] = {
-        "client_id": os.environ["XERO_CLIENT_ID"],
-        "client_secret": os.environ["XERO_CLIENT_SECRET"],
-        "redirect_uri": os.environ["XERO_REDIRECT_URI"],
-        "tenant_id": os.environ["XERO_TENANT_ID"],
-    }
-
-    refresh_token = os.environ.get("XERO_REFRESH_TOKEN")
-    if refresh_token:
-        secrets["refresh_token"] = refresh_token
-
-    if os.path.exists(SECRETS_FILE):
-        with open(SECRETS_FILE, "r", encoding="utf-8") as f:
-            file_secrets = json.load(f)
-        if isinstance(file_secrets, dict):
-            # Prefer rotated token from local runtime file if present.
-            if file_secrets.get("refresh_token"):
-                secrets["refresh_token"] = file_secrets["refresh_token"]
-
-    if "refresh_token" not in secrets:
-        raise KeyError(
-            "Missing XERO_REFRESH_TOKEN environment variable (or runtime xero_secrets.json refresh_token)."
+def load_secrets():
+    import os
+    import json
+    
+    secrets_path = os.path.join(os.path.dirname(__file__), "xero_secrets.json")
+    
+    print(f"[DEBUG] Loading secrets from: {secrets_path}")
+    if not os.path.exists(secrets_path):
+        raise FileNotFoundError(
+            f"xero_secrets.json not found at {secrets_path}"
         )
-
+    
+    with open(secrets_path, "r") as f:
+        secrets = json.load(f)
+    
+    required_keys = [
+        "client_id",
+        "client_secret",
+        "refresh_token",
+        "tenant_id",
+        "redirect_uri"
+    ]
+    
+    for key in required_keys:
+        if key not in secrets:
+            raise KeyError(f"Missing key '{key}' in xero_secrets.json")
+    
+    print("[DEBUG] Secrets loaded successfully.")
     return secrets
 
 def save_secrets(s: Dict[str, str]):
     # Keep a local runtime cache file for rotated refresh tokens between runs.
     # This file is intentionally gitignored and should not be committed.
+    secrets_path = os.path.join(os.path.dirname(__file__), "xero_secrets.json")
+    
     existing: Dict[str, Any] = {}
-    if os.path.exists(SECRETS_FILE):
+    if os.path.exists(secrets_path):
         try:
-            with open(SECRETS_FILE, "r", encoding="utf-8") as f:
+            with open(secrets_path, "r", encoding="utf-8") as f:
                 data = json.load(f)
                 if isinstance(data, dict):
                     existing = data
@@ -64,9 +64,9 @@ def save_secrets(s: Dict[str, str]):
             existing[key] = s[key]
 
     try:
-        with open(SECRETS_FILE, "w", encoding="utf-8") as f:
+        with open(secrets_path, "w", encoding="utf-8") as f:
             json.dump(existing, f, indent=2)
-        print(f"[INFO] Saved secrets to {SECRETS_FILE}")
+        print(f"[INFO] Saved secrets to {secrets_path}")
     except Exception as e:
         print(f"[ERROR] Failed to save secrets file: {e}")
         traceback.print_exc()
@@ -249,7 +249,7 @@ def unique_path(base_dir: str, fname: str) -> str:
 def run_ap_process(xlsx_path: str):
     try:
         print(f"\n[INFO] Starting AP process with file: {xlsx_path}")
-        out_root  = os.environ.get("XERO_OUT_ROOT", BASE_DIR)
+        out_root  = os.environ.get("XERO_OUT_ROOT", os.getcwd())
         print(f"[INFO] Output root: {out_root}")
 
         print("[INFO] Loading secrets...")
