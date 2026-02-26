@@ -9,7 +9,7 @@ from typing import Dict, Any, List, Optional
 import requests
 from openpyxl import load_workbook
 
-TOKEN_FILE = "/home/xero_token_store.json"
+SECRETS_FILE = "/home/xero_secrets.json"
 
 # ---------------- Environment helpers ----------------
 def _env(*names):
@@ -20,69 +20,71 @@ def _env(*names):
             return val
     return None
 
-# ---------------- Token Store ----------------
-def load_token_store() -> Dict[str, Any]:
-    """Load token store from persistent file."""
-    if os.path.exists(TOKEN_FILE):
-        try:
-            with open(TOKEN_FILE, "r", encoding="utf-8") as f:
-                data = json.load(f)
-                print(f"[info] Loaded token store from {TOKEN_FILE}")
-                return data
-        except Exception as e:
-            print(f"[warn] Failed to load token store: {e}")
-    return {}
-
-def save_token_store(data: Dict[str, Any]):
-    """Save token store to persistent file."""
-    try:
-        os.makedirs(os.path.dirname(TOKEN_FILE), exist_ok=True)
-        with open(TOKEN_FILE, "w", encoding="utf-8") as f:
-            json.dump(data, f, indent=2)
-        print(f"[info] Saved token store to {TOKEN_FILE}")
-    except Exception as e:
-        print(f"[error] Failed to save token store: {e}")
-        raise
-
-# ---------------- OAuth ----------------
+# ---------------- Secrets Management ----------------
 def load_secrets() -> Dict[str, str]:
-    """Load secrets from environment variables and token store."""
-    secrets = {}
+    """Load secrets from /home/xero_secrets.json file."""
+    if not os.path.exists(SECRETS_FILE):
+        raise FileNotFoundError(
+            f"Secrets file not found at {SECRETS_FILE}. "
+            "Please create this file with client_id, client_secret, refresh_token, and tenant_id. "
+            "You can upload it via Azure App Service SSH or FTP."
+        )
     
-    # Load static credentials from environment variables
-    secrets["client_id"] = _env("XERO_CLIENT_ID", "CLIENT_ID") or ""
-    secrets["client_secret"] = _env("XERO_CLIENT_SECRET", "CLIENT_SECRET") or ""
-    secrets["tenant_id"] = _env("XERO_TENANT_ID", "TENANT_ID") or ""
-    secrets["scopes"] = _env("XERO_SCOPES", "SCOPES") or "offline_access accounting.transactions accounting.attachments"
-    secrets["redirect_uri"] = _env("XERO_REDIRECT_URI", "REDIRECT_URI") or "http://localhost:8080/callback"
+    try:
+        with open(SECRETS_FILE, "r", encoding="utf-8") as f:
+            secrets = json.load(f)
+        print(f"[info] Loaded secrets from {SECRETS_FILE}")
+    except json.JSONDecodeError as e:
+        raise ValueError(f"Invalid JSON in {SECRETS_FILE}: {e}")
+    except Exception as e:
+        raise RuntimeError(f"Failed to read {SECRETS_FILE}: {e}")
     
-    # Load refresh token from persistent store first, then fallback to env var
-    token_store = load_token_store()
-    secrets["refresh_token"] = token_store.get("refresh_token") or _env("XERO_REFRESH_TOKEN", "REFRESH_TOKEN") or ""
+    # Validate required fields
+    required = ["client_id", "client_secret", "refresh_token"]
+    missing = [field for field in required if not secrets.get(field)]
+    if missing:
+        raise ValueError(
+            f"Missing required fields in {SECRETS_FILE}: {', '.join(missing)}. "
+            "The file must contain: client_id, client_secret, refresh_token, and optionally tenant_id."
+        )
     
-    if token_store.get("refresh_token"):
-        print("[info] Using refresh token from persistent token store")
-    elif _env("XERO_REFRESH_TOKEN", "REFRESH_TOKEN"):
-        print("[info] Using refresh token from environment variable (first run bootstrap)")
-    
-    # Load tenant_id from token store if not in env
-    if not secrets["tenant_id"] and token_store.get("tenant_id"):
-        secrets["tenant_id"] = token_store["tenant_id"]
-        print(f"[info] Using tenant_id from token store: {secrets['tenant_id']}")
-    
-    if not secrets["client_id"] or not secrets["client_secret"]:
-        raise ValueError("Missing required credentials: XERO_CLIENT_ID and XERO_CLIENT_SECRET must be set in environment variables")
-    
-    if not secrets["refresh_token"]:
-        raise ValueError("Missing refresh token: Set XERO_REFRESH_TOKEN environment variable for first-run bootstrap, or ensure token store exists at " + TOKEN_FILE)
+    # Set defaults for optional fields
+    secrets.setdefault("tenant_id", "")
+    secrets.setdefault("scopes", "offline_access accounting.transactions accounting.attachments")
+    secrets.setdefault("redirect_uri", "http://localhost:8080/callback")
     
     return secrets
 
+def save_secrets(secrets: Dict[str, str]):
+    """Atomically save secrets to /home/xero_secrets.json file."""
+    temp_file = SECRETS_FILE + ".tmp"
+    
+    try:
+        # Write to temporary file first
+        os.makedirs(os.path.dirname(SECRETS_FILE), exist_ok=True)
+        with open(temp_file, "w", encoding="utf-8") as f:
+            json.dump(secrets, f, indent=2)
+        
+        # Atomic rename
+        os.replace(temp_file, SECRETS_FILE)
+        print(f"[info] Saved updated secrets to {SECRETS_FILE}")
+    except Exception as e:
+        # Clean up temp file if it exists
+        if os.path.exists(temp_file):
+            try:
+                os.remove(temp_file)
+            except:
+                pass
+        raise RuntimeError(f"Failed to save secrets to {SECRETS_FILE}: {e}")
+
+# ---------------- OAuth ----------------
 def refresh_access_token(secrets: Dict[str, str]) -> str:
     """Refresh the access token using OAuth2 flow with Basic auth and persist the rotated token."""
     client_id = secrets["client_id"]
     client_secret = secrets["client_secret"]
     refresh_token = secrets["refresh_token"]
+    
+    print(f"[info] Refreshing access token...")
     
     # Create Basic auth header
     credentials = f"{client_id}:{client_secret}"
@@ -106,46 +108,42 @@ def refresh_access_token(secrets: Dict[str, str]) -> str:
         timeout=40,
     )
     
-    # Debug output as required
+    # Debug output
     print("TOKEN STATUS:", r.status_code)
     print("TOKEN BODY:", r.text)
     
     r.raise_for_status()
     tok = r.json()
     
-    # Xero rotates refresh tokens - persist to token store
+    # Extract tokens
     new_refresh_token = tok.get("refresh_token")
     access_token = tok["access_token"]
     
+    # Xero rotates refresh tokens - persist immediately
     if new_refresh_token and new_refresh_token != refresh_token:
-        print("[info] Refresh token rotated by Xero, persisting to token store...")
-        
-        # Update in-memory secrets
+        print("[info] Refresh token rotated by Xero, persisting to secrets file...")
         secrets["refresh_token"] = new_refresh_token
-        
-        # Persist to token store
-        token_store = load_token_store()
-        token_store["refresh_token"] = new_refresh_token
-        token_store["last_refreshed"] = dt.datetime.utcnow().isoformat()
-        
-        # Also save tenant_id if available
-        if secrets.get("tenant_id"):
-            token_store["tenant_id"] = secrets["tenant_id"]
-        
-        save_token_store(token_store)
-        print(f"[info] New refresh token persisted to {TOKEN_FILE}")
+        secrets["access_token"] = access_token
+        secrets["last_refreshed"] = dt.datetime.utcnow().isoformat()
+        save_secrets(secrets)
+        print("[info] New refresh token persisted successfully")
+    else:
+        # Still update access token and timestamp
+        secrets["access_token"] = access_token
+        secrets["last_refreshed"] = dt.datetime.utcnow().isoformat()
+        save_secrets(secrets)
     
     return access_token
 
 def get_tenant_id(token: str, secrets: Dict[str, str]) -> str:
-    """Get tenant ID from env var, token store, or by querying Xero connections API."""
+    """Get tenant ID from secrets file or by querying Xero connections API."""
     tenant_id = secrets.get("tenant_id")
     if tenant_id:
-        print(f"[info] Using tenant ID from configuration: {tenant_id}")
+        print(f"[info] Using tenant ID from secrets file: {tenant_id}")
         return tenant_id
     
     # Query connections API
-    print("[info] Tenant ID not configured, querying Xero connections...")
+    print("[info] Tenant ID not in secrets file, querying Xero connections...")
     headers = {
         "Authorization": f"Bearer {token}",
         "Content-Type": "application/json"
@@ -164,12 +162,11 @@ def get_tenant_id(token: str, secrets: Dict[str, str]) -> str:
     
     print(f"[info] Selected tenant: {tenant_name} (ID: {tenant_id})")
     
-    # Save to token store for future use
+    # Save to secrets file for future use
     secrets["tenant_id"] = tenant_id
-    token_store = load_token_store()
-    token_store["tenant_id"] = tenant_id
-    token_store["tenant_name"] = tenant_name
-    save_token_store(token_store)
+    secrets["tenant_name"] = tenant_name
+    save_secrets(secrets)
+    print(f"[info] Tenant ID saved to {SECRETS_FILE}")
     
     return tenant_id
 
