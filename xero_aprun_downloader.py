@@ -9,7 +9,7 @@ from typing import Dict, Any, List, Optional
 import requests
 from openpyxl import load_workbook
 
-SECRETS_FILE = "/home/xero_secrets.json"
+SECRETS_PATH = "/home/xero_secrets.json"
 
 # ---------------- Environment helpers ----------------
 def _env(*names):
@@ -23,28 +23,28 @@ def _env(*names):
 # ---------------- Secrets Management ----------------
 def load_secrets() -> Dict[str, str]:
     """Load secrets from /home/xero_secrets.json file."""
-    if not os.path.exists(SECRETS_FILE):
+    if not os.path.exists(SECRETS_PATH):
         raise FileNotFoundError(
-            f"Secrets file not found at {SECRETS_FILE}. "
+            f"Secrets file not found at {SECRETS_PATH}. "
             "Please create this file with client_id, client_secret, refresh_token, and tenant_id. "
             "You can upload it via Azure App Service SSH or FTP."
         )
     
     try:
-        with open(SECRETS_FILE, "r", encoding="utf-8") as f:
+        with open(SECRETS_PATH, "r", encoding="utf-8") as f:
             secrets = json.load(f)
-        print(f"[info] Loaded secrets from {SECRETS_FILE}")
+        print(f"[info] Loaded secrets from {SECRETS_PATH}")
     except json.JSONDecodeError as e:
-        raise ValueError(f"Invalid JSON in {SECRETS_FILE}: {e}")
+        raise ValueError(f"Invalid JSON in {SECRETS_PATH}: {e}")
     except Exception as e:
-        raise RuntimeError(f"Failed to read {SECRETS_FILE}: {e}")
+        raise RuntimeError(f"Failed to read {SECRETS_PATH}: {e}")
     
     # Validate required fields
     required = ["client_id", "client_secret", "refresh_token"]
     missing = [field for field in required if not secrets.get(field)]
     if missing:
         raise ValueError(
-            f"Missing required fields in {SECRETS_FILE}: {', '.join(missing)}. "
+            f"Missing required fields in {SECRETS_PATH}: {', '.join(missing)}. "
             "The file must contain: client_id, client_secret, refresh_token, and optionally tenant_id."
         )
     
@@ -57,17 +57,17 @@ def load_secrets() -> Dict[str, str]:
 
 def save_secrets(secrets: Dict[str, str]):
     """Atomically save secrets to /home/xero_secrets.json file."""
-    temp_file = SECRETS_FILE + ".tmp"
+    temp_file = SECRETS_PATH + ".tmp"
     
     try:
         # Write to temporary file first
-        os.makedirs(os.path.dirname(SECRETS_FILE), exist_ok=True)
+        os.makedirs(os.path.dirname(SECRETS_PATH), exist_ok=True)
         with open(temp_file, "w", encoding="utf-8") as f:
             json.dump(secrets, f, indent=2)
         
         # Atomic rename
-        os.replace(temp_file, SECRETS_FILE)
-        print(f"[info] Saved updated secrets to {SECRETS_FILE}")
+        os.replace(temp_file, SECRETS_PATH)
+        print(f"[info] Saved updated secrets to {SECRETS_PATH}")
     except Exception as e:
         # Clean up temp file if it exists
         if os.path.exists(temp_file):
@@ -75,7 +75,7 @@ def save_secrets(secrets: Dict[str, str]):
                 os.remove(temp_file)
             except:
                 pass
-        raise RuntimeError(f"Failed to save secrets to {SECRETS_FILE}: {e}")
+        raise RuntimeError(f"Failed to save secrets to {SECRETS_PATH}: {e}")
 
 # ---------------- OAuth ----------------
 def refresh_access_token(secrets: Dict[str, str]) -> str:
@@ -166,7 +166,7 @@ def get_tenant_id(token: str, secrets: Dict[str, str]) -> str:
     secrets["tenant_id"] = tenant_id
     secrets["tenant_name"] = tenant_name
     save_secrets(secrets)
-    print(f"[info] Tenant ID saved to {SECRETS_FILE}")
+    print(f"[info] Tenant ID saved to {SECRETS_PATH}")
     
     return tenant_id
 

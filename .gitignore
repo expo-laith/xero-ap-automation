@@ -13,6 +13,7 @@ venv/
 antenv/
 
 # Secrets / local runtime state
+xero_secrets.json
 downloaded_state.json
 .env
 .env.*

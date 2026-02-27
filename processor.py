@@ -10,21 +10,26 @@ from typing import Dict, Any, List, Optional
 import requests
 from openpyxl import load_workbook
 
+# Persistent storage path for Azure
+SECRETS_PATH = "/home/xero_secrets.json"
+
 # ---------------- OAuth ----------------
 def load_secrets():
-    import os
-    import json
-    
-    secrets_path = os.path.join(os.path.dirname(__file__), "xero_secrets.json")
-    
-    print(f"[DEBUG] Loading secrets from: {secrets_path}")
-    if not os.path.exists(secrets_path):
+    """Load secrets from persistent Azure storage."""
+    print(f"[DEBUG] Loading secrets from: {SECRETS_PATH}")
+    if not os.path.exists(SECRETS_PATH):
         raise FileNotFoundError(
-            f"xero_secrets.json not found at {secrets_path}"
+            f"Secrets file not found at {SECRETS_PATH}. "
+            "Please authorize Xero by visiting /authorize-xero endpoint."
         )
     
-    with open(secrets_path, "r") as f:
-        secrets = json.load(f)
+    try:
+        with open(SECRETS_PATH, "r", encoding="utf-8") as f:
+            secrets = json.load(f)
+    except json.JSONDecodeError as e:
+        raise ValueError(f"Invalid JSON in {SECRETS_PATH}: {e}")
+    except Exception as e:
+        raise RuntimeError(f"Failed to read {SECRETS_PATH}: {e}")
     
     required_keys = [
         "client_id",
@@ -36,45 +41,54 @@ def load_secrets():
     
     for key in required_keys:
         if key not in secrets:
-            raise KeyError(f"Missing key '{key}' in xero_secrets.json")
+            raise KeyError(f"Missing key '{key}' in {SECRETS_PATH}")
     
     print("[DEBUG] Secrets loaded successfully.")
     return secrets
 
 def save_secrets(s: Dict[str, str]):
-    # Keep a local runtime cache file for rotated refresh tokens between runs.
-    # This file is intentionally gitignored and should not be committed.
-    secrets_path = os.path.join(os.path.dirname(__file__), "xero_secrets.json")
+    """Atomically save secrets to persistent Azure storage."""
+    temp_file = SECRETS_PATH + ".tmp"
     
-    existing: Dict[str, Any] = {}
-    if os.path.exists(secrets_path):
-        try:
-            with open(secrets_path, "r", encoding="utf-8") as f:
-                data = json.load(f)
-                if isinstance(data, dict):
-                    existing = data
-        except Exception as e:
-            print(f"[WARN] Failed to load existing secrets file: {e}")
-            traceback.print_exc()
-            existing = {}
-
-    # Persist only runtime values needed for token rotation between runs.
-    for key in ("refresh_token", "tenant_id", "access_token", "token_type", "expires_in", "expires_at", "obtained_at"):
-        if key in s:
-            existing[key] = s[key]
-
     try:
-        with open(secrets_path, "w", encoding="utf-8") as f:
+        # Ensure directory exists
+        os.makedirs(os.path.dirname(SECRETS_PATH), exist_ok=True)
+        
+        # Load existing data to preserve all fields
+        existing: Dict[str, Any] = {}
+        if os.path.exists(SECRETS_PATH):
+            try:
+                with open(SECRETS_PATH, "r", encoding="utf-8") as f:
+                    data = json.load(f)
+                    if isinstance(data, dict):
+                        existing = data
+            except Exception as e:
+                print(f"[WARN] Failed to load existing secrets file: {e}")
+                traceback.print_exc()
+
+        # Update with new values
+        existing.update(s)
+
+        # Write to temporary file first
+        with open(temp_file, "w", encoding="utf-8") as f:
             json.dump(existing, f, indent=2)
-        print(f"[INFO] Saved secrets to {secrets_path}")
+        
+        # Atomic rename
+        os.replace(temp_file, SECRETS_PATH)
+        print(f"[INFO] Saved secrets to {SECRETS_PATH}")
     except Exception as e:
+        # Clean up temp file if it exists
+        if os.path.exists(temp_file):
+            try:
+                os.remove(temp_file)
+            except:
+                pass
         print(f"[ERROR] Failed to save secrets file: {e}")
         traceback.print_exc()
         raise
 
 def refresh_access_token(secrets: Dict[str, str]) -> str:
-    import base64
-
+    """Refresh the access token and persist the rotated refresh token."""
     basic_auth = base64.b64encode(
         f"{secrets['client_id']}:{secrets['client_secret']}".encode("utf-8")
     ).decode("ascii")
@@ -102,13 +116,18 @@ def refresh_access_token(secrets: Dict[str, str]) -> str:
 
     r.raise_for_status()
 
-    tok = r.json()
+    token_data = r.json()
 
-    # Xero rotates refresh tokens
-    secrets["refresh_token"] = tok["refresh_token"]
-    save_secrets(secrets)
+    # Xero rotates refresh tokens - persist immediately
+    new_refresh_token = token_data.get("refresh_token")
+    if new_refresh_token:
+        secrets["refresh_token"] = new_refresh_token
+        secrets["access_token"] = token_data["access_token"]
+        secrets["last_refreshed"] = dt.datetime.utcnow().isoformat()
+        save_secrets(secrets)
+        print("[INFO] Refresh token rotated and persisted successfully")
 
-    return tok["access_token"]
+    return token_data["access_token"]
 
 def xero_get(url: str, token: str, tenant_id: str, params=None, stream: bool=False):
     headers = {

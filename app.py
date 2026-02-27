@@ -4,10 +4,11 @@ import tempfile
 import traceback
 
 from fastapi import FastAPI, File, Request, UploadFile
-from fastapi.responses import FileResponse, HTMLResponse
+from fastapi.responses import FileResponse, HTMLResponse, RedirectResponse
 from fastapi.templating import Jinja2Templates
+import requests
 
-from processor import run_ap_process
+from processor import run_ap_process, load_secrets, save_secrets
 
 # 🔥 FIX: use the real app directory — NOT os.getcwd()
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -30,6 +31,95 @@ async def download_template():
         filename="AP_run_template.xlsx",
         media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
     )
+
+
+@app.get("/authorize-xero")
+def authorize_xero():
+    """Redirect user to Xero OAuth authorization page."""
+    try:
+        secrets = load_secrets()
+    except FileNotFoundError:
+        return HTMLResponse(
+            content="<h3>Error: Secrets file not found</h3>"
+            "<p>Please ensure /home/xero_secrets.json exists with client_id, client_secret, and redirect_uri.</p>",
+            status_code=500
+        )
+    except Exception as e:
+        return HTMLResponse(
+            content=f"<h3>Error loading secrets</h3><p>{str(e)}</p>",
+            status_code=500
+        )
+    
+    auth_url = (
+        "https://login.xero.com/identity/connect/authorize?"
+        f"response_type=code"
+        f"&client_id={secrets['client_id']}"
+        f"&redirect_uri={secrets['redirect_uri']}"
+        f"&scope=offline_access accounting.transactions accounting.attachments"
+    )
+    
+    return RedirectResponse(auth_url)
+
+
+@app.get("/callback")
+def xero_callback(code: str):
+    """Handle OAuth callback from Xero and exchange code for tokens."""
+    try:
+        secrets = load_secrets()
+    except Exception as e:
+        return {"status": "error", "message": f"Failed to load secrets: {str(e)}"}
+    
+    try:
+        token_response = requests.post(
+            "https://identity.xero.com/connect/token",
+            data={
+                "grant_type": "authorization_code",
+                "code": code,
+                "redirect_uri": secrets["redirect_uri"]
+            },
+            auth=(secrets["client_id"], secrets["client_secret"]),
+            timeout=30
+        )
+        
+        token_response.raise_for_status()
+        tokens = token_response.json()
+        
+        # Update refresh token
+        secrets["refresh_token"] = tokens["refresh_token"]
+        secrets["access_token"] = tokens.get("access_token", "")
+        
+        # Get tenant ID
+        if tokens.get("access_token"):
+            try:
+                connections_response = requests.get(
+                    "https://api.xero.com/connections",
+                    headers={
+                        "Authorization": f"Bearer {tokens['access_token']}",
+                        "Content-Type": "application/json"
+                    },
+                    timeout=30
+                )
+                connections_response.raise_for_status()
+                connections = connections_response.json()
+                
+                if connections:
+                    secrets["tenant_id"] = connections[0]["tenantId"]
+                    secrets["tenant_name"] = connections[0].get("tenantName", "Unknown")
+            except Exception as e:
+                print(f"[WARN] Failed to fetch tenant ID: {e}")
+        
+        save_secrets(secrets)
+        
+        return HTMLResponse(
+            content="<h3>Xero authorized successfully!</h3>"
+            "<p>You can close this window and return to the application.</p>"
+            "<p><a href='/'>Go back to home</a></p>"
+        )
+    
+    except requests.HTTPError as e:
+        return {"status": "error", "message": f"Token exchange failed: {e.response.text}"}
+    except Exception as e:
+        return {"status": "error", "message": f"Authorization failed: {str(e)}"}
 
 
 @app.post("/run")
